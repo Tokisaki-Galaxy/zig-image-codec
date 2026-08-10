@@ -1,0 +1,15 @@
+.{
+    .name = .zig_image_codec,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x2dbc2923ee595cba,
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "docs",
+        "LICENSE",
+        "README.md",
+    },
+}
