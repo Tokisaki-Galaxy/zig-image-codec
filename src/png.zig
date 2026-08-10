@@ -15,8 +15,6 @@ const root = @import("root.zig");
 
 const PNG_MAGIC = "\x89PNG\r\n\x1a\n";
 const SALT_TEXT_KEY = "Software";
-const SALT_TEXT_MARKER = "sid=";
-const SALT_BYTES: usize = 16;
 
 /// Anti-decompression-bomb: reject any image whose raw pixel data would
 /// exceed 20 MiB.
@@ -36,30 +34,6 @@ fn paethPredictor(a: u8, b: u8, c: u8) u8 {
     return c;
 }
 
-/// Recover the 16-byte KDF salt from a `tEXt` chunk payload, if present.
-fn parseSaltFromTextChunk(chunk_data: []const u8) !?[SALT_BYTES]u8 {
-    const sep = std.mem.indexOfScalar(u8, chunk_data, 0) orelse return null;
-    const key = chunk_data[0..sep];
-    if (!std.mem.eql(u8, key, SALT_TEXT_KEY) and !std.mem.eql(u8, key, "Description")) {
-        return null;
-    }
-
-    const value = chunk_data[sep + 1 ..];
-    const marker_pos = std.mem.indexOf(u8, value, SALT_TEXT_MARKER) orelse return null;
-    var sid = value[marker_pos + SALT_TEXT_MARKER.len ..];
-    if (std.mem.indexOfScalar(u8, sid, ';')) |end| sid = sid[0..end];
-    sid = std.mem.trim(u8, sid, " \t\r\n");
-    if (sid.len == 0) return error.InvalidSaltMetadata;
-
-    const decoder = std.base64.url_safe_no_pad.Decoder;
-    const decoded_len = decoder.calcSizeForSlice(sid) catch return error.InvalidSaltMetadata;
-    if (decoded_len != SALT_BYTES) return error.InvalidSaltMetadata;
-
-    var salt: [SALT_BYTES]u8 = undefined;
-    decoder.decode(&salt, sid) catch return error.InvalidSaltMetadata;
-    return salt;
-}
-
 /// Decode a PNG into stego carrier bytes.
 pub fn decode(allocator: std.mem.Allocator, data: []const u8) !root.Decoded {
     if (data.len < 8) return error.NotPng;
@@ -71,7 +45,7 @@ pub fn decode(allocator: std.mem.Allocator, data: []const u8) !root.Decoded {
     var bit_depth: u8 = 0;
     var color_type: u8 = 0;
     var found_ihdr = false;
-    var salt: ?[SALT_BYTES]u8 = null;
+    var salt: ?[root.SALT_BYTES]u8 = null;
     var idat_buf = std.ArrayList(u8).empty;
     defer idat_buf.deinit(allocator);
 
@@ -91,7 +65,7 @@ pub fn decode(allocator: std.mem.Allocator, data: []const u8) !root.Decoded {
         } else if (std.mem.eql(u8, chunk_type, "IDAT")) {
             try idat_buf.appendSlice(allocator, chunk_data);
         } else if (std.mem.eql(u8, chunk_type, "tEXt")) {
-            if (try parseSaltFromTextChunk(chunk_data)) |parsed_salt| {
+            if (try root.parseSaltText(chunk_data)) |parsed_salt| {
                 salt = parsed_salt;
             }
         } else if (std.mem.eql(u8, chunk_type, "IEND")) {
@@ -194,7 +168,7 @@ test "paethPredictor: edge values" {
 }
 
 test "parseSaltFromTextChunk: decodes sid metadata" {
-    const salt: [SALT_BYTES]u8 = .{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+    const salt: [root.SALT_BYTES]u8 = .{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
     var sid_buf: [64]u8 = undefined;
     const sid = std.base64.url_safe_no_pad.Encoder.encode(&sid_buf, &salt);
 
@@ -204,14 +178,14 @@ test "parseSaltFromTextChunk: decodes sid metadata" {
     @memcpy(chunk_buf[prefix.len .. prefix.len + sid.len], sid);
     const chunk = chunk_buf[0 .. prefix.len + sid.len];
 
-    const parsed = try parseSaltFromTextChunk(chunk);
+    const parsed = try root.parseSaltText(chunk);
     try std.testing.expect(parsed != null);
     try std.testing.expectEqualSlices(u8, salt[0..], parsed.?[0..]);
 }
 
 test "parseSaltFromTextChunk: unrelated tEXt returns null" {
     const chunk = "Comment\x00nothing here";
-    try std.testing.expect((try parseSaltFromTextChunk(chunk)) == null);
+    try std.testing.expect((try root.parseSaltText(chunk)) == null);
 }
 
 test "decode: wrong magic returns NotPng" {
@@ -380,7 +354,7 @@ test "decode round-trip with salt metadata" {
     defer allocator.free(png_data);
 
     // Append a tEXt chunk with a salt before IEND.
-    const salt: [SALT_BYTES]u8 = .{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+    const salt: [root.SALT_BYTES]u8 = .{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
     var sid_buf: [64]u8 = undefined;
     const sid = std.base64.url_safe_no_pad.Encoder.encode(&sid_buf, &salt);
     const prefix = SALT_TEXT_KEY ++ "\x00Adobe Photoshop 25.0; sid=";

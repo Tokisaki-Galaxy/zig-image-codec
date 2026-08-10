@@ -21,6 +21,35 @@ const std = @import("std");
 pub const png = @import("png.zig");
 pub const jpeg = @import("jpeg.zig");
 
+const SALT_TEXT_KEY = "Software";
+const SALT_TEXT_MARKER = "sid=";
+pub const SALT_BYTES: usize = 16;
+
+/// Recover the 16-byte KDF salt from a metadata payload of the form
+/// `Software\0<...>; sid=<base64url>` (PNG tEXt / JPEG COM).
+pub fn parseSaltText(chunk_data: []const u8) !?[SALT_BYTES]u8 {
+    const sep = std.mem.indexOfScalar(u8, chunk_data, 0) orelse return null;
+    const key = chunk_data[0..sep];
+    if (!std.mem.eql(u8, key, SALT_TEXT_KEY) and !std.mem.eql(u8, key, "Description")) {
+        return null;
+    }
+
+    const value = chunk_data[sep + 1 ..];
+    const marker_pos = std.mem.indexOf(u8, value, SALT_TEXT_MARKER) orelse return null;
+    var sid = value[marker_pos + SALT_TEXT_MARKER.len ..];
+    if (std.mem.indexOfScalar(u8, sid, ';')) |end| sid = sid[0..end];
+    sid = std.mem.trim(u8, sid, " \t\r\n");
+    if (sid.len == 0) return error.InvalidSaltMetadata;
+
+    const decoder = std.base64.url_safe_no_pad.Decoder;
+    const decoded_len = decoder.calcSizeForSlice(sid) catch return error.InvalidSaltMetadata;
+    if (decoded_len != SALT_BYTES) return error.InvalidSaltMetadata;
+
+    var salt: [SALT_BYTES]u8 = undefined;
+    decoder.decode(&salt, sid) catch return error.InvalidSaltMetadata;
+    return salt;
+}
+
 /// Uniform decoded output consumed by the stego layer.
 pub const Decoded = struct {
     /// Carrier byte array. The caller owns this memory (must free).
