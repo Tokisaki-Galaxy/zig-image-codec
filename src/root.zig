@@ -47,6 +47,28 @@ pub fn decodeJpeg(allocator: std.mem.Allocator, data: []const u8) !Decoded {
     return jpeg.decode(allocator, data);
 }
 
+/// Minimal PNG encoder for round-trip tests (same shape as `decodePng`).
+pub fn encodePngForTest(
+    pixels: []const u8,
+    width: u32,
+    height: u32,
+    bpp: u8,
+    allocator: std.mem.Allocator,
+) ![]u8 {
+    return png.encodeForTest(pixels, width, height, bpp, allocator);
+}
+
+/// Minimal baseline JPEG encoder for round-trip tests (same shape as
+/// `decodeJpeg`).
+pub fn encodeJpegForTest(
+    y_coefficients: []const i16,
+    blocks_x: u32,
+    blocks_y: u32,
+    allocator: std.mem.Allocator,
+) ![]u8 {
+    return jpeg.encodeForTest(y_coefficients, blocks_x, blocks_y, allocator);
+}
+
 test {
     std.testing.refAllDecls(@This());
     _ = png;
