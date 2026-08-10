@@ -22,11 +22,70 @@ import struct
 from PIL import Image
 
 ZIGZAG = [
-    0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5,
-    12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21,
-    28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30,
-    37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61,
-    54, 47, 55, 62, 63,
+    0,
+    1,
+    8,
+    16,
+    9,
+    2,
+    3,
+    10,
+    17,
+    24,
+    32,
+    25,
+    18,
+    11,
+    4,
+    5,
+    12,
+    19,
+    26,
+    33,
+    40,
+    48,
+    41,
+    34,
+    27,
+    20,
+    13,
+    6,
+    7,
+    14,
+    21,
+    28,
+    35,
+    42,
+    49,
+    56,
+    57,
+    50,
+    43,
+    36,
+    29,
+    22,
+    15,
+    23,
+    30,
+    37,
+    44,
+    51,
+    58,
+    59,
+    52,
+    45,
+    38,
+    31,
+    39,
+    46,
+    53,
+    60,
+    61,
+    54,
+    47,
+    55,
+    62,
+    63,
 ]
 AC_BAND_LO = 1
 AC_BAND_HI = 32
@@ -42,14 +101,16 @@ def make_texture(width, height):
         for x in range(width):
             r = (x * 7 + y * 3) % 256
             g = (x * 11 + y * 5 + 40) % 256
-            b = (int(128 + 96 * math.sin(x / 6.0) * math.cos(y / 5.0)) % 256)
+            b = int(128 + 96 * math.sin(x / 6.0) * math.cos(y / 5.0)) % 256
             px[x, y] = (r, g, b)
     return img
 
 
 def inject_com(data: bytes, salt: bytes) -> bytes:
     """Insert a COM segment (salt metadata) right after the SOI marker."""
-    payload = b"Software\x00Adobe Photoshop 25.0; sid=" + base64.urlsafe_b64encode(salt).rstrip(b"=")
+    payload = b"Software\x00Adobe Photoshop 25.0; sid=" + base64.urlsafe_b64encode(
+        salt
+    ).rstrip(b"=")
     seg = b"\xff\xfe" + struct.pack(">H", len(payload) + 2) + payload
     assert data[:2] == b"\xff\xd8"
     return data[:2] + seg + data[2:]
@@ -59,7 +120,7 @@ def write_zig(path, name, blocks_x, blocks_y, carriers, salt):
     def arr(prefix, vals, indent=4):
         lines = []
         for i in range(0, len(vals), 16):
-            chunk = ", ".join(str(v) for v in vals[i:i + 16])
+            chunk = ", ".join(str(v) for v in vals[i : i + 16])
             lines.append(" " * indent + chunk + ",")
         return f"pub const {prefix} = [_]u8{{\n" + "\n".join(lines) + "\n};\n"
 
@@ -69,7 +130,7 @@ def write_zig(path, name, blocks_x, blocks_y, carriers, salt):
         f.write(f"//! libjpeg oracle for the {name} fixture.\n\n")
         f.write(f"pub const BLOCKS_X: u32 = {blocks_x};\n")
         f.write(f"pub const BLOCKS_Y: u32 = {blocks_y};\n")
-        f.write(f"pub const SALT_HEX = \"{salt_hex}\";\n\n")
+        f.write(f'pub const SALT_HEX = "{salt_hex}";\n\n')
         f.write(arr("carriers", carriers))
     import subprocess
 
@@ -122,13 +183,17 @@ def build(name, mode, blocks_x, blocks_y):
                 mag = abs(val)
                 carriers.append(mag if 2 <= mag <= 254 else 0)
 
-    fixture_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "fixtures")
+    fixture_dir = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "src", "fixtures"
+    )
     os.makedirs(fixture_dir, exist_ok=True)
     fixture_path = os.path.join(fixture_dir, f"oracle_{name}.jpg")
     with open(fixture_path, "wb") as f:
         f.write(jpg)
 
-    out_zig = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", f"oracle_{name}.zig")
+    out_zig = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "src", f"oracle_{name}.zig"
+    )
     write_zig(out_zig, name, nx, ny, carriers, SALT)
     nz = sum(1 for c in carriers if c != 0)
     print(f"{name}: {nx}x{ny} blocks, {len(carriers)} carriers, {nz} nonzero")
