@@ -1,0 +1,5 @@
+# Dev dependencies for tools/gen_jpeg_fixtures.py (oracle regeneration).
+# The committed fixtures make `zig build test` dependency-free; regenerate
+# only when the JPEG pipeline or tooling versions change.
+pillow==11.3.0
+jpeglib==1.0.2

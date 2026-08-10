@@ -63,5 +63,10 @@ zig fmt --check .    # formatting gate (CI)
 
 Requires Zig 0.16.0. Pure std — no third-party runtime dependencies.
 
+The JPEG decoder is cross-validated against libjpeg: `src/oracle_*.zig` +
+`src/fixtures/oracle_*.jpg` hold the expected Y quantized coefficients for a
+color 4:2:0 and a grayscale fixture. Regenerate with
+`python tools/gen_jpeg_fixtures.py` (see `requirements.txt`).
+
 See `docs/stego.md` for the full stego-facing specification (KDF, PRNG
 budget, STC construction, cost model, cross-language alignment).

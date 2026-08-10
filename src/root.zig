@@ -90,12 +90,12 @@ pub fn encodePngForTest(
 /// Minimal baseline JPEG encoder for round-trip tests (same shape as
 /// `decodeJpeg`).
 pub fn encodeJpegForTest(
-    y_coefficients: []const i16,
+    carriers: []const u8,
     blocks_x: u32,
     blocks_y: u32,
     allocator: std.mem.Allocator,
 ) ![]u8 {
-    return jpeg.encodeForTest(y_coefficients, blocks_x, blocks_y, allocator);
+    return jpeg.encodeForTest(carriers, blocks_x, blocks_y, allocator);
 }
 
 test {
