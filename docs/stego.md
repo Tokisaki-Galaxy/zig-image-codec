@@ -41,7 +41,7 @@ carriers: []u8      // Y quantized AC magnitudes, block-major
 width    = blocks_x // DCT blocks across (Y)
 height   = blocks_y // DCT blocks down (Y)
 bpp      = 31       // zig-zag AC positions 1..32
-salt     = ?[16]u8  // from COM metadata
+salt_material / salt_material_len // EXIF-derived material, see §8
 ```
 
 Per block `b = by*blocks_x + bx` and band offset `z-1` (z in 1..32):
@@ -64,7 +64,7 @@ The candidate set (`2 <= v <= 254`) is **invariant** under the allowed
 ## 3. KDF (HKDF-SHA256)
 
 ```
-PRK   = HKDF-Extract(salt = metadata_salt,  IKM = stego_secret)
+PRK   = HKDF-Extract(salt = derived_salt,  IKM = stego_secret)
 OKM   = HKDF-Expand(PRK, info = "zafkiel-stego-v2",  length = 64)
 key     = OKM[0..32)    // ChaCha20-Poly1305
 seed_p  = OKM[32..64)   // Xoshiro256 permutation seed
@@ -72,8 +72,9 @@ seed_p  = OKM[32..64)   // Xoshiro256 permutation seed
 
 - `stego_secret` is 16 bytes, from `-Dstego_secret` (client) /
   `--stego-secret` (operator).  It is independent of `obf_key`.
-- The metadata salt is public (COM segment); its only role is KDF domain
-  separation and anti-metadata-stripping (packet salt must equal it).
+- The salt is *derived* from the cover's own EXIF material (see §8); its
+  role is KDF domain separation and anti-tampering (packet salt must equal
+  it).  It is public, never secret.
 
 ## 4. PRNG budget
 
@@ -146,7 +147,7 @@ cheapest valid neighbour (`apply_flip`).
 
 ```
 [0..4)   version  = 2                (big-endian u32)
-[4..20)  salt     = 16 bytes          (must equal the metadata salt)
+[4..20)  salt     = 16 bytes          (must equal the derived salt, §8)
 [20..32) nonce    = 12 bytes
 [32..96) ciphertext (ChaCha20-Poly1305, AAD = "")
 [96..112) tag     = 16 bytes
@@ -157,15 +158,45 @@ Plaintext (64 bytes): `[0] = domain length (1..59)`,
 (`InvalidPacketTag`, `SaltMetadataMismatch`, `UnsupportedPacketVersion`) all
 abort resolution (client falls back to the built-in host).
 
-## 8. Metadata salt (JPEG COM)
+## 8. Salt material (EXIF-derived; zero cover modification)
+
+The dead-drop image is **never modified** beyond the embedded DCT watermark.
+The salt is *derived* from the cover's own EXIF fields — the ones every real
+camera writes — so an unkeyed observer cannot distinguish a dead-drop image
+from any other photo, and there is no fixed metadata signature anywhere.
 
 ```
-COM payload: "Software\x00Adobe Photoshop 25.0; sid=" + base64url(salt).rstrip('=')
+material = Make || '\0' || Model || '\0' || DateTimeOriginal || '\0'
+           || SubsecTimeOriginal || '\0' || <SOF width> || 'x' || <SOF height>
+salt     = HMAC-SHA256(key = stego_secret[16B], msg = "zafkiel-salt-v3" + material)[0:16]
 ```
 
-The codec scans COM segments; the client verifies the packet salt equals it
-(anti-metadata-stripping: replacing the salt changes the KDF key and breaks
-the AEAD).
+- Required EXIF fields (fail-closed on both sides — missing any ⇒ no
+  material ⇒ resolution fails):
+  - IFD0: `Make` (0x010F), `Model` (0x0110)
+  - EXIF sub-IFD: `DateTimeOriginal` (0x9003), `SubsecTimeOriginal` (0x9291)
+- Dimensions come from the baseline SOF0 frame (pixels), identical on the
+  Python side (`PIL` reads the stored SOF dims; no orientation handling).
+- TIFF byte order: both `II` (little-endian, e.g. Canon) and `MM`
+  (big-endian, e.g. Huawei) are supported.
+- ASCII values are read per the TIFF spec (inline when `count <= 4`, else at
+  the stored offset) with trailing NULs/spaces stripped.
+- Anti-tampering is preserved: the AEAD packet salt (§7) must equal the
+  derived salt — altering or stripping any of the four EXIF fields changes
+  the material and breaks extraction (`SaltMetadataMismatch`).
+- The salt is a pure function of `(photo, stego_secret)`: re-encoding the
+  same cover reproduces the same salt; different photos (different
+  `DateTimeOriginal`/`SubsecTimeOriginal`) produce different salts, so
+  dead-drop images cannot be cross-correlated.
+- Edge case (accepted, documented in `docs/operations.md`): two photos taken
+  on the same device in the same second with the same sub-second value share
+  a salt.  The salt is not secret (Kerckhoffs), so this only affects KDF
+  domain separation for those images.
+
+The Python mirror is `tools/exif_tool.py`; the Zig parser is `src/exif.zig`;
+`decodeJpeg` returns the canonical material in `Decoded.salt_material`
+(`salt_material_len == 0` when no material is recoverable) and the client
+performs the keyed HMAC derivation.
 
 ## 9. Cross-language alignment & golden vectors
 
@@ -180,7 +211,8 @@ python tools/gen_e2e_fixture.py     # libjpeg encoder -> Zig decoder e2e
 
 Committed golden files are the source of truth for any refactor of the
 encoder or decoder.  `gen_jpeg_fixtures.py` lives in this repository;
-the other generators live in the zafkiel `tools/` directory.
+the other generators live in the zafkiel `tools/` directory.  The e2e
+fixture's `SALT_HEX` locks the Python↔Zig material/salt derivation.
 
 ## 10. Operator workflow
 
@@ -188,9 +220,11 @@ The `stego_secret` must be **pinned** and shared:
 
 1. Build a dead-drop client with a fixed secret:
    `zig build -Dobf_key=<hex> -Dstego_secret=<hex> ...`
-2. Encode the C2 image:
+2. Encode the C2 image (cover MUST be a real camera photo whose EXIF has the
+   four required fields; the encoder rejects anything else):
    `python tools/prng_stego.py --stego-secret <hex> encode cover.jpg c2.example.com out.jpg`
-3. Host `out.jpg`; the client's resolver URL points at it.
+3. Host `out.jpg`; the client's resolver URL points at it.  The output keeps
+   the cover's EXIF and vendor APP segments byte-for-byte.
 
 CI builds randomise `stego_secret` per build — such binaries cannot decode
 operator-created dead-drop images (by design; the secret is the only key).
