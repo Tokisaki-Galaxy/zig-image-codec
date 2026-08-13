@@ -14,41 +14,19 @@
 //!   [1..32], `|coef| ∈ [2, 254]`, block-major over the 8×8 DCT grid
 //!   (`width`=blocks_x, `height`=blocks_y, `bpp`=31).
 //!
-//! See `docs/stego.md` for the full stego-facing specification.
+//! The dead-drop salt is *derived* (client side) from `salt_material`, which
+//! the JPEG decoder recovers from the cover's own EXIF (see `exif.zig`): the
+//! cover image itself is never modified.  See `docs/stego.md` §8.
 
 const std = @import("std");
 
 pub const png = @import("png.zig");
 pub const jpeg = @import("jpeg.zig");
+pub const exif = @import("exif.zig");
 
-const SALT_TEXT_KEY = "Software";
-const SALT_TEXT_MARKER = "sid=";
-pub const SALT_BYTES: usize = 16;
-
-/// Recover the 16-byte KDF salt from a metadata payload of the form
-/// `Software\0<...>; sid=<base64url>` (PNG tEXt / JPEG COM).
-pub fn parseSaltText(chunk_data: []const u8) !?[SALT_BYTES]u8 {
-    const sep = std.mem.indexOfScalar(u8, chunk_data, 0) orelse return null;
-    const key = chunk_data[0..sep];
-    if (!std.mem.eql(u8, key, SALT_TEXT_KEY) and !std.mem.eql(u8, key, "Description")) {
-        return null;
-    }
-
-    const value = chunk_data[sep + 1 ..];
-    const marker_pos = std.mem.indexOf(u8, value, SALT_TEXT_MARKER) orelse return null;
-    var sid = value[marker_pos + SALT_TEXT_MARKER.len ..];
-    if (std.mem.indexOfScalar(u8, sid, ';')) |end| sid = sid[0..end];
-    sid = std.mem.trim(u8, sid, " \t\r\n");
-    if (sid.len == 0) return error.InvalidSaltMetadata;
-
-    const decoder = std.base64.url_safe_no_pad.Decoder;
-    const decoded_len = decoder.calcSizeForSlice(sid) catch return error.InvalidSaltMetadata;
-    if (decoded_len != SALT_BYTES) return error.InvalidSaltMetadata;
-
-    var salt: [SALT_BYTES]u8 = undefined;
-    decoder.decode(&salt, sid) catch return error.InvalidSaltMetadata;
-    return salt;
-}
+/// Upper bound for the canonical salt material byte string
+/// (`Make\0Model\0DateTimeOriginal\0SubsecTimeOriginal\0WxH`).
+pub const SALT_MATERIAL_MAX: usize = 160;
 
 /// Uniform decoded output consumed by the stego layer.
 pub const Decoded = struct {
@@ -60,8 +38,10 @@ pub const Decoded = struct {
     height: u32,
     /// PNG: bytes per pixel (1..4). JPEG: AC coefficients per block (31).
     bpp: u8,
-    /// Optional 16-byte KDF salt recovered from metadata (PNG tEXt / JPEG COM).
-    salt: ?[16]u8,
+    /// Canonical salt material (JPEG EXIF-derived; see `exif.zig`).
+    /// `salt_material_len == 0` means no material was recoverable.
+    salt_material: [SALT_MATERIAL_MAX]u8 = [_]u8{0} ** SALT_MATERIAL_MAX,
+    salt_material_len: usize = 0,
 };
 
 /// Decode a PNG into carrier bytes. Fails with `error.NotPng` if the magic

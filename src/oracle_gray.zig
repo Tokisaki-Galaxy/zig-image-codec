@@ -3,7 +3,7 @@
 
 pub const BLOCKS_X: u32 = 7;
 pub const BLOCKS_Y: u32 = 5;
-pub const SALT_HEX = "000102030405060708090a0b0c0d0e0f";
+pub const MATERIAL_HEX = "48554157454900454c532d414e313000323032363a30383a30322031313a33393a343000323239353032003536783430";
 
 pub const carriers = [_]u8{
     87,  29, 0,  4,  0,   6,  0,  0,  2,  0, 0,  0,  0,  0, 0, 0,

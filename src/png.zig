@@ -1,20 +1,18 @@
 //! PNG decoder -> carrier bytes (raw scanline pixel buffer).
 //!
 //! Supports 8-bit PNGs of color types 0 (grayscale), 2 (RGB), 4 (grayscale +
-//! alpha) and 6 (RGBA), reversing all five filter types.  Metadata: an
-//! optional 16-byte KDF salt is recovered from a `tEXt` chunk whose key is
-//! `Software` or `Description` and whose value contains `sid=<base64url>`.
+//! alpha) and 6 (RGBA), reversing all five filter types.
 //!
 //! The carrier for the stego layer is the raw pixel byte buffer; `width` /
 //! `height` are the pixel grid dimensions and `bpp` the bytes per pixel.
 //! An anti-decompression-bomb cap rejects images whose raw pixel data would
-//! exceed `MAX_PIXEL_BYTES`.
+//! exceed `MAX_PIXEL_BYTES`.  The dead-drop salt material is JPEG-EXIF-only;
+//! PNG decode never recovers any (`salt_material_len` stays 0).
 
 const std = @import("std");
 const root = @import("root.zig");
 
 const PNG_MAGIC = "\x89PNG\r\n\x1a\n";
-const SALT_TEXT_KEY = "Software";
 
 /// Anti-decompression-bomb: reject any image whose raw pixel data would
 /// exceed 20 MiB.
@@ -45,7 +43,6 @@ pub fn decode(allocator: std.mem.Allocator, data: []const u8) !root.Decoded {
     var bit_depth: u8 = 0;
     var color_type: u8 = 0;
     var found_ihdr = false;
-    var salt: ?[root.SALT_BYTES]u8 = null;
     var idat_buf = std.ArrayList(u8).empty;
     defer idat_buf.deinit(allocator);
 
@@ -64,10 +61,6 @@ pub fn decode(allocator: std.mem.Allocator, data: []const u8) !root.Decoded {
             found_ihdr = true;
         } else if (std.mem.eql(u8, chunk_type, "IDAT")) {
             try idat_buf.appendSlice(allocator, chunk_data);
-        } else if (std.mem.eql(u8, chunk_type, "tEXt")) {
-            if (try root.parseSaltText(chunk_data)) |parsed_salt| {
-                salt = parsed_salt;
-            }
         } else if (std.mem.eql(u8, chunk_type, "IEND")) {
             break;
         }
@@ -152,7 +145,6 @@ pub fn decode(allocator: std.mem.Allocator, data: []const u8) !root.Decoded {
         .width = width,
         .height = height,
         .bpp = bpp,
-        .salt = salt,
     };
 }
 
@@ -165,27 +157,6 @@ test "paethPredictor: basic cases" {
 test "paethPredictor: edge values" {
     try std.testing.expectEqual(@as(u8, 42), paethPredictor(42, 42, 42));
     try std.testing.expectEqual(@as(u8, 3), paethPredictor(0, 5, 3));
-}
-
-test "parseSaltFromTextChunk: decodes sid metadata" {
-    const salt: [root.SALT_BYTES]u8 = .{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
-    var sid_buf: [64]u8 = undefined;
-    const sid = std.base64.url_safe_no_pad.Encoder.encode(&sid_buf, &salt);
-
-    var chunk_buf: [128]u8 = undefined;
-    const prefix = SALT_TEXT_KEY ++ "\x00Adobe Photoshop 25.0; sid=";
-    @memcpy(chunk_buf[0..prefix.len], prefix);
-    @memcpy(chunk_buf[prefix.len .. prefix.len + sid.len], sid);
-    const chunk = chunk_buf[0 .. prefix.len + sid.len];
-
-    const parsed = try root.parseSaltText(chunk);
-    try std.testing.expect(parsed != null);
-    try std.testing.expectEqualSlices(u8, salt[0..], parsed.?[0..]);
-}
-
-test "parseSaltFromTextChunk: unrelated tEXt returns null" {
-    const chunk = "Comment\x00nothing here";
-    try std.testing.expect((try root.parseSaltText(chunk)) == null);
 }
 
 test "decode: wrong magic returns NotPng" {
@@ -336,51 +307,5 @@ test "decode round-trip with encodeForTest" {
     try std.testing.expectEqual(height, decoded.height);
     try std.testing.expectEqual(bpp, decoded.bpp);
     try std.testing.expectEqualSlices(u8, pixels, decoded.carriers);
-    try std.testing.expect(decoded.salt == null);
-}
-
-test "decode round-trip with salt metadata" {
-    const allocator = std.testing.allocator;
-    const width: u32 = 8;
-    const height: u32 = 8;
-    const bpp: u8 = 1;
-    const pixel_count = width * height * bpp;
-
-    const pixels = try allocator.alloc(u8, pixel_count);
-    defer allocator.free(pixels);
-    @memset(pixels, 0xFE);
-
-    const png_data = try encodeForTest(pixels, width, height, bpp, allocator);
-    defer allocator.free(png_data);
-
-    // Append a tEXt chunk with a salt before IEND.
-    const salt: [root.SALT_BYTES]u8 = .{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
-    var sid_buf: [64]u8 = undefined;
-    const sid = std.base64.url_safe_no_pad.Encoder.encode(&sid_buf, &salt);
-    const prefix = SALT_TEXT_KEY ++ "\x00Adobe Photoshop 25.0; sid=";
-    var text_buf: [128]u8 = undefined;
-    @memcpy(text_buf[0..prefix.len], prefix);
-    @memcpy(text_buf[prefix.len .. prefix.len + sid.len], sid);
-    const text = text_buf[0 .. prefix.len + sid.len];
-
-    var with_salt = std.ArrayList(u8).empty;
-    defer with_salt.deinit(allocator);
-    try with_salt.appendSlice(allocator, png_data[0 .. png_data.len - 12]); // drop IEND
-    var len_buf: [4]u8 = undefined;
-    std.mem.writeInt(u32, &len_buf, @intCast(text.len), .big);
-    try with_salt.appendSlice(allocator, &len_buf);
-    try with_salt.appendSlice(allocator, "tEXt");
-    try with_salt.appendSlice(allocator, text);
-    var crc = std.hash.crc.Crc32.init();
-    crc.update("tEXt"[0..]);
-    crc.update(text);
-    const crc_val = crc.final();
-    std.mem.writeInt(u32, &len_buf, crc_val, .big);
-    try with_salt.appendSlice(allocator, &len_buf);
-    try with_salt.appendSlice(allocator, png_data[png_data.len - 12 ..]); // re-add IEND
-
-    const decoded = try decode(allocator, with_salt.items);
-    defer allocator.free(decoded.carriers);
-    try std.testing.expect(decoded.salt != null);
-    try std.testing.expectEqualSlices(u8, salt[0..], decoded.salt.?[0..]);
+    try std.testing.expectEqual(@as(usize, 0), decoded.salt_material_len);
 }

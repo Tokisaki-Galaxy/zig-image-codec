@@ -17,12 +17,16 @@
 //! the candidate set invariant under the encoder's +/-1 magnitude flips
 //! (F5 non-shrinkability; boundaries protected by asymmetric costs).
 //!
+//! The dead-drop salt material is recovered from the cover's own EXIF APP1
+//! segment (`exif.zig`); the decoder never relies on custom metadata.
+//!
 //! Unsupported variants are rejected explicitly: progressive (SOF2),
 //! arithmetic-coded (SOF9..SOF14), 4-component CMYK, non-8-bit precision,
 //! non-interleaved / multi-scan streams.
 
 const std = @import("std");
 const root = @import("root.zig");
+const exif = @import("exif.zig");
 
 // ── Markers ──────────────────────────────────────────────────────────────────
 
@@ -37,6 +41,7 @@ const M_DRI: u8 = 0xDD;
 const M_RST0: u8 = 0xD0;
 const M_RST7: u8 = 0xD7;
 const M_COM: u8 = 0xFE;
+const M_APP1: u8 = 0xE1;
 
 // ── Carrier band ─────────────────────────────────────────────────────────────
 
@@ -368,7 +373,7 @@ pub fn decode(allocator: std.mem.Allocator, data: []const u8) !root.Decoded {
     var dc_huff: [4]HuffTable = .{ .{}, .{}, .{}, .{} };
     var ac_huff: [4]HuffTable = .{ .{}, .{}, .{}, .{} };
     var restart_interval: u16 = 0;
-    var salt: ?[root.SALT_BYTES]u8 = null;
+    var app1_payload: ?[]const u8 = null;
     var saw_sof = false;
     var decoded: ?ScanOut = null;
 
@@ -433,10 +438,14 @@ pub fn decode(allocator: std.mem.Allocator, data: []const u8) !root.Decoded {
                 pos = end;
             },
             M_COM => {
+                pos = try skipSegment(data, pos);
+            },
+            M_APP1 => {
                 const end = try skipSegment(data, pos);
-                if (end > pos + 2) {
-                    if (try root.parseSaltText(data[pos + 2 .. end])) |parsed_salt| {
-                        salt = parsed_salt;
+                if (end > pos + 2 and app1_payload == null) {
+                    const payload = data[pos + 2 .. end];
+                    if (std.mem.startsWith(u8, payload, "Exif\x00\x00")) {
+                        app1_payload = payload;
                     }
                 }
                 pos = end;
@@ -495,12 +504,22 @@ pub fn decode(allocator: std.mem.Allocator, data: []const u8) !root.Decoded {
     }
 
     const out = decoded orelse return error.MissingSOS;
+
+    var salt_material: [root.SALT_MATERIAL_MAX]u8 = [_]u8{0} ** root.SALT_MATERIAL_MAX;
+    var salt_material_len: usize = 0;
+    if (app1_payload) |p| {
+        // SOF frame dimensions (pixels), matching the Python side's SOF parse.
+        if (exif.buildMaterial(p, frame.width, frame.height, &salt_material)) |len| {
+            salt_material_len = len;
+        }
+    }
     return .{
         .carriers = out.carriers,
         .width = out.blocks_x,
         .height = out.blocks_y,
         .bpp = BPP,
-        .salt = salt,
+        .salt_material = salt_material,
+        .salt_material_len = salt_material_len,
     };
 }
 
@@ -752,6 +771,8 @@ test "encodeForTest / decode round-trip" {
     try std.testing.expectEqual(blocks_y, decoded.height);
     try std.testing.expectEqual(BPP, decoded.bpp);
     try std.testing.expectEqualSlices(u8, carriers, decoded.carriers);
+    // The test encoder writes no EXIF: no salt material may be recovered.
+    try std.testing.expectEqual(@as(usize, 0), decoded.salt_material_len);
 }
 
 test "encodeForTest rejects short carrier" {
@@ -781,15 +802,18 @@ fn expectOracleMatch(allocator: std.mem.Allocator, data: []const u8, oracle: any
     try std.testing.expectEqual(@as(usize, expected_len), decoded.carriers.len);
     try std.testing.expectEqualSlices(u8, &oracle.carriers, decoded.carriers);
 
-    // Salt from the injected COM segment.
-    try std.testing.expect(decoded.salt != null);
+    // Salt material recovered from the injected EXIF APP1 segment.
+    try std.testing.expect(decoded.salt_material_len > 0);
     const hex_chars = "0123456789abcdef";
-    var salt_hex_buf: [64]u8 = undefined;
-    for (decoded.salt.?[0..], 0..) |byte, i| {
-        salt_hex_buf[i * 2 + 0] = hex_chars[byte >> 4];
-        salt_hex_buf[i * 2 + 1] = hex_chars[byte & 0xF];
+    var mat_hex_buf: [root.SALT_MATERIAL_MAX * 2]u8 = undefined;
+    for (decoded.salt_material[0..decoded.salt_material_len], 0..) |byte, i| {
+        mat_hex_buf[i * 2 + 0] = hex_chars[byte >> 4];
+        mat_hex_buf[i * 2 + 1] = hex_chars[byte & 0xF];
     }
-    try std.testing.expectEqualStrings(oracle.SALT_HEX, salt_hex_buf[0..32]);
+    try std.testing.expectEqualStrings(
+        oracle.MATERIAL_HEX,
+        mat_hex_buf[0 .. decoded.salt_material_len * 2],
+    );
 }
 
 test "decode matches libjpeg oracle (color 4:2:0)" {
