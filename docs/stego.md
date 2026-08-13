@@ -64,14 +64,21 @@ The candidate set (`2 <= v <= 254`) is **invariant** under the allowed
 ## 3. KDF (HKDF-SHA256)
 
 ```
+ctx   = HMAC-SHA256(key = stego_secret, msg = 0x02)[0..16]   // keyed domain label
 PRK   = HKDF-Extract(salt = derived_salt,  IKM = stego_secret)
-OKM   = HKDF-Expand(PRK, info = "zafkiel-stego-v2",  length = 64)
+OKM   = HKDF-Expand(PRK, info = ctx,  length = 64)
 key     = OKM[0..32)    // ChaCha20-Poly1305
 seed_p  = OKM[32..64)   // Xoshiro256 permutation seed
 ```
 
 - `stego_secret` is 16 bytes, from `-Dstego_secret` (client) /
   `--stego-secret` (operator).  It is independent of `obf_key`.
+- The HKDF `info` is a **keyed domain-separation context** (single-byte tag
+  selector `0x02`) rather than a fixed string — no campaign-wide constant
+  exists to YARA for.  Tags: `0x01` dead-drop salt, `0x02` stego KDF,
+  `0x03` directive KDF.  Mirrors `client_stego.zig: deriveContext` /
+  `tools/exif_tool.py: derive_context` (locked by
+  `tools/gen_label_golden.py`).
 - The salt is *derived* from the cover's own EXIF material (see §8); its
   role is KDF domain separation and anti-tampering (packet salt must equal
   it).  It is public, never secret.
@@ -168,7 +175,8 @@ from any other photo, and there is no fixed metadata signature anywhere.
 ```
 material = Make || '\0' || Model || '\0' || DateTimeOriginal || '\0'
            || SubsecTimeOriginal || '\0' || <SOF width> || 'x' || <SOF height>
-salt     = HMAC-SHA256(key = stego_secret[16B], msg = "zafkiel-salt-v3" + material)[0:16]
+ctx_salt = HMAC-SHA256(key = stego_secret[16B], msg = 0x01)[0:16]
+salt     = HMAC-SHA256(key = stego_secret[16B], msg = ctx_salt + material)[0:16]
 ```
 
 - Required EXIF fields (fail-closed on both sides — missing any ⇒ no
