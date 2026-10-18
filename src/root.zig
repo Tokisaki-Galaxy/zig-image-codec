@@ -40,7 +40,7 @@ pub const Decoded = struct {
     bpp: u8,
     /// Canonical salt material (JPEG EXIF-derived; see `exif.zig`).
     /// `salt_material_len == 0` means no material was recoverable.
-    salt_material: [SALT_MATERIAL_MAX]u8 = [_]u8{0} ** SALT_MATERIAL_MAX,
+    salt_material: [SALT_MATERIAL_MAX]u8 = @splat(0),
     salt_material_len: usize = 0,
 };
 

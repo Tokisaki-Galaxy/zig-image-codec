@@ -57,10 +57,10 @@ const MAX_BLOCKS: u64 = 400_000;
 // ── Huffman table ────────────────────────────────────────────────────────────
 
 const HuffTable = struct {
-    min_code: [17]i32 = [_]i32{-1} ** 17,
-    max_code: [17]i32 = [_]i32{-1} ** 17,
-    val_offset: [17]u32 = [_]u32{0} ** 17,
-    symbols: [256]u8 = [_]u8{0} ** 256,
+    min_code: [17]i32 = @splat(-1),
+    max_code: [17]i32 = @splat(-1),
+    val_offset: [17]u32 = @splat(0),
+    symbols: [256]u8 = @splat(0),
     num_symbols: u16 = 0,
 };
 
@@ -245,7 +245,7 @@ fn parseHuffTables(
         if (id > 3) return error.InvalidHuffman;
         if (pos + 16 > end) return error.InvalidHuffman;
 
-        var counts: [17]u32 = [_]u32{0} ** 17;
+        var counts: [17]u32 = @splat(0);
         var total: u32 = 0;
         for (1..17) |b| {
             counts[b] = data[pos + b - 1];
@@ -505,7 +505,7 @@ pub fn decode(allocator: std.mem.Allocator, data: []const u8) !root.Decoded {
 
     const out = decoded orelse return error.MissingSOS;
 
-    var salt_material: [root.SALT_MATERIAL_MAX]u8 = [_]u8{0} ** root.SALT_MATERIAL_MAX;
+    var salt_material: [root.SALT_MATERIAL_MAX]u8 = @splat(0);
     var salt_material_len: usize = 0;
     if (app1_payload) |p| {
         // SOF frame dimensions (pixels), matching the Python side's SOF parse.
@@ -580,7 +580,7 @@ pub fn encodeForTest(
     const dc_codes = comptime canonicalCodes(&STD_DC_LUMA_COUNTS, &STD_DC_LUMA_SYMS);
     const ac_codes = comptime canonicalCodes(&STD_AC_LUMA_COUNTS, &STD_AC_LUMA_SYMS);
     var prev_dc: i32 = 0;
-    var coef: [64]i16 = [_]i16{0} ** 64;
+    var coef: [64]i16 = @splat(0);
     for (0..total_blocks) |bi| {
         @memset(&coef, 0);
         for (AC_BAND_LO..AC_BAND_HI + 1) |z| {
@@ -623,7 +623,7 @@ const STD_AC_LUMA_SYMS = [162]u8{
 const CodeEntry = struct { code: u16, len: u8 };
 
 fn canonicalCodes(comptime counts: *const [16]u8, comptime syms: []const u8) [256]CodeEntry {
-    var out: [256]CodeEntry = [_]CodeEntry{.{ .code = 0, .len = 0 }} ** 256;
+    var out: [256]CodeEntry = @splat(.{ .code = 0, .len = 0 });
     var code: u32 = 0;
     var k: usize = 0;
     for (1..17) |b| {
