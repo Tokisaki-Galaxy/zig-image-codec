@@ -249,7 +249,7 @@ pub fn encodeForTest(
     try out.appendSlice(allocator, "IHDR");
     try out.appendSlice(allocator, &ihdr);
 
-    var ihdr_crc = std.hash.crc.Crc32.init();
+    var ihdr_crc = std.hash.crc.@"CRC-32/ISO-HDLC".init();
     ihdr_crc.update("IHDR"[0..]);
     ihdr_crc.update(&ihdr);
     const ihdr_crc_val = ihdr_crc.final();
@@ -264,7 +264,7 @@ pub fn encodeForTest(
     try out.appendSlice(allocator, "IDAT");
     try out.appendSlice(allocator, idat_data);
 
-    var idat_crc = std.hash.crc.Crc32.init();
+    var idat_crc = std.hash.crc.@"CRC-32/ISO-HDLC".init();
     idat_crc.update("IDAT"[0..]);
     idat_crc.update(idat_data);
     const idat_crc_val = idat_crc.final();
@@ -273,7 +273,7 @@ pub fn encodeForTest(
     try out.appendSlice(allocator, &idat_crc_buf);
 
     // IEND chunk.
-    var iend_crc = std.hash.crc.Crc32.init();
+    var iend_crc = std.hash.crc.@"CRC-32/ISO-HDLC".init();
     iend_crc.update("IEND"[0..]);
     const iend_crc_val = iend_crc.final();
     var iend_crc_buf: [4]u8 = undefined;

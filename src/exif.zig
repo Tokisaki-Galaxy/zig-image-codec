@@ -169,10 +169,10 @@ fn buildTestExif(big: bool, inline_subsec: bool) Buf {
     const tiff_start = b.len;
     b.append(if (big) "MM" else "II");
     const magic_off = b.len;
-    b.append(&[_]u8{0} ** 2);
+    b.append(&.{ 0, 0 });
     putU16(b.data[magic_off..], 42, big);
     const ifd0_off_pos = b.len;
-    b.append(&[_]u8{0} ** 4);
+    b.append(&.{ 0, 0, 0, 0 });
     const ifd0_off = b.len; // IFD0 starts here (after the 8-byte header)
     putU32(b.data[ifd0_off_pos..], @intCast(ifd0_off - tiff_start), big);
 
@@ -180,7 +180,8 @@ fn buildTestExif(big: bool, inline_subsec: bool) Buf {
     putU16(b.data[b.len..], 4, big);
     b.len += 2;
     const e0 = b.len;
-    b.append(&[_]u8{0} ** (4 * 12));
+    var zeros: [4 * 12]u8 = @splat(0);
+    b.append(&zeros);
     const sub_off = ifd0_off + 2 + 4 * 12 + 4;
     const data_start = ifd0_off + 2 + 4 * 12 + 4 + 2 + 2 * 12 + 4;
     var ep = e0;
@@ -217,7 +218,8 @@ fn buildTestExif(big: bool, inline_subsec: bool) Buf {
     putU16(b.data[b.len..], 2, big);
     b.len += 2;
     const s1 = b.len;
-    b.append(&[_]u8{0} ** (2 * 12 + 4));
+    const sub_zeros: [2 * 12 + 4]u8 = @splat(0);
+    b.append(&sub_zeros);
     var sp = s1;
     putU16(b.data[sp..], 0x9003, big);
     putU16(b.data[sp + 2 ..], 2, big);
@@ -293,7 +295,7 @@ test "buildMaterial: rejects missing required tags" {
 
 test "buildMaterial: rejects malformed TIFF" {
     var buf: [160]u8 = undefined;
-    var payload: [32]u8 = [_]u8{0} ** 32;
+    var payload: [32]u8 = @splat(0);
     @memcpy(payload[0..6], "Exif\x00\x00");
     payload[6] = 'X'; // bad endian marker
     try std.testing.expect(buildMaterial(&payload, 10, 10, &buf) == null);
