@@ -15,8 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.17.0
+        # version 留空：自动采用 build.zig.zon 的 minimum_zig_version（单一事实来源）
       - name: Check formatting
         run: zig fmt --check .
 
@@ -26,7 +25,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.17.0
+        # version 留空：自动采用 build.zig.zon 的 minimum_zig_version（单一事实来源）
       - name: Run tests
         run: zig build test
